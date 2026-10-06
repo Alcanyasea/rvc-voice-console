@@ -1,0 +1,33 @@
+# ===== 白名单式 .gitignore：默认全部排除，只放行自研工具与补丁 =====
+# RVC 本体（runtime/assets 数 GB）、第三方声音模型（.pth/.index）、安装包、
+# 个人录音等一律不入库，防止大文件被拒或隐私/版权内容外泄。
+/*
+
+!/.gitignore
+!/README.md
+!/LICENSE
+!/*.md
+!/*.ps1
+!/*.py
+!/panel_launcher.cs
+!/变声控制台.ico
+!/变声控制台.png
+!/RVC2026/
+
+# RVC2026 只放行打过补丁的入口文件和本机配置
+RVC2026/*
+!RVC2026/RVC20260718Nvidia/
+RVC2026/RVC20260718Nvidia/*
+!RVC2026/RVC20260718Nvidia/realtime_gui.py
+!RVC2026/RVC20260718Nvidia/realtime_guiw.pyw
+!RVC2026/RVC20260718Nvidia/go-realtime_gui.bat
+!RVC2026/RVC20260718Nvidia/configs/
+RVC2026/RVC20260718Nvidia/configs/*
+!RVC2026/RVC20260718Nvidia/configs/config.json
+!RVC2026/RVC20260718Nvidia/configs/config-游戏变声-备份20261006.json
+
+# 构建产物 / 运行时状态
+变声控制台.exe
+__pycache__/
+stream_state.txt
+realtime_gui.log
