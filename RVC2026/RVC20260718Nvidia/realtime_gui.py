@@ -25,6 +25,18 @@ def printt(strr, *args):
 
 
 if __name__ == "__main__":
+    import ctypes
+
+    # 防多开：命名互斥锁。面板拉起后模型加载的几秒里窗口还没出现，重复点「启动 RVC」
+    # 或跑 bat 会拉起第二个实例（抢音频设备），检测到锁已存在就立即退出。
+    # 注意：windll 默认不保留 Windows last error（GetLastError() 会读到脏值，
+    # 实测拦不住第二个实例），必须 use_last_error=True + ctypes.get_last_error()。
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.CreateMutexW(None, False, "RVC_Realtime_GUI_SingleInstance")
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        printt("RVC 已在运行，本次启动直接退出")
+        sys.exit(0)
+
     import json
     import re
     import time
@@ -60,7 +72,7 @@ if __name__ == "__main__":
             self.I_noise_reduce = False
             self.O_noise_reduce = False
             self.rms_mix_rate = 0.0
-            self.index_rate = 0.0
+            self.index_rate = 0.1
             self.f0method = "rmvpe"
             self.sg_hostapi = ""
             self.wasapi_exclusive = False
@@ -132,7 +144,7 @@ if __name__ == "__main__":
                         "threhold": -60,
                         "pitch": 0,
                         "formant": 0.0,
-                        "index_rate": 0,
+                        "index_rate": 0.1,
                         "rms_mix_rate": 0,
                         "block_time": 0.25,
                         "crossfade_length": 0.05,
@@ -286,7 +298,7 @@ if __name__ == "__main__":
                                     key="index_rate",
                                     resolution=0.01,
                                     orientation="h",
-                                    default_value=data.get("index_rate", 0),
+                                    default_value=data.get("index_rate", 0.1),
                                     enable_events=True,
                                 ),
                             ],
@@ -450,9 +462,22 @@ if __name__ == "__main__":
             self._cb_count = 0
             self._cb_seen = 0
             self._cb_stale_checks = 0
+            # 启动时先清掉残留的退出标记，防止上次面板异常退出导致本次一启动就被杀
+            try:
+                if os.path.exists("panel_quit.flag"):
+                    os.remove("panel_quit.flag")
+            except Exception:
+                pass
 
             def _poll_infer():
                 try:
+                    # 面板退出联动：看到退出标记就删掉并走 -TRAY_QUIT- 的正常停流退出路径
+                    if os.path.exists("panel_quit.flag"):
+                        try:
+                            os.remove("panel_quit.flag")
+                        except Exception:
+                            pass
+                        self.window.write_event_value("-TRAY_QUIT-", None)
                     self.window["infer_time"].update(self._infer_ms)
                     if flag_vc:
                         if self._cb_count != self._cb_seen:
@@ -508,6 +533,15 @@ if __name__ == "__main__":
             except Exception:
                 pass
 
+        def _quit_app(self):
+            self.stop_stream()
+            import threading
+            # infi.systray 的 shutdown() 偶发卡死在托盘消息线程上（实测：流已停但进程挂死不退），
+            # 挂 3 秒强制退出兜底，托盘图标由系统在进程死后回收
+            threading.Timer(3.0, lambda: os._exit(0)).start()
+            self._shutdown_systray()
+            os._exit(0)
+
         def event_handler(self):
             global flag_vc
             while True:
@@ -519,16 +553,12 @@ if __name__ == "__main__":
                         self.window.TKroot.withdraw()
                         continue  # 必须跳过末尾兜底分支，否则会误停转换流
                     else:
-                        self.stop_stream()
-                        self._shutdown_systray()
-                        exit()
+                        self._quit_app()
                 if event == "-TRAY_RESTORE-":
                     self._restore_from_tray()
                     continue  # 必须跳过末尾兜底分支，否则从托盘恢复窗口即停转换流
                 elif event == "-TRAY_QUIT-":
-                    self.stop_stream()
-                    self._shutdown_systray()
-                    exit()
+                    self._quit_app()
                 if event == "reload_devices" or event == "sg_hostapi":
                     self.gui_config.sg_hostapi = values["sg_hostapi"]
                     self.update_devices(hostapi_name=values["sg_hostapi"])
@@ -632,6 +662,11 @@ if __name__ == "__main__":
                     self.stop_stream()
 
         def set_values(self, values):
+            # 无与模型同名的 .index → 检索特征占比自动归 0（有同名 index 则保留界面值，默认 0.1）
+            base = os.path.splitext(os.path.basename(values["pth_path"]))[0]
+            if not os.path.exists(os.path.join("logs", base + ".index")):
+                values["index_rate"] = 0
+                self.window["index_rate"].update(0)
             if len(values["pth_path"].strip()) == 0:
                 sg.popup(i18n("请选择pth文件"))
                 return False

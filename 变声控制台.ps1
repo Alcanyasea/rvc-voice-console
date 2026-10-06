@@ -313,7 +313,7 @@ $miShow  = $menu.Items.Add('显示面板')
 $miGame  = $menu.Items.Add('游戏变声')
 $miVoice = $menu.Items.Add('恢复原声')
 [void]$menu.Items.Add('-')
-$miExit  = $menu.Items.Add('退出（并恢复原声）')
+$miExit  = $menu.Items.Add('退出（恢复原声并关闭 RVC）')
 $tray.ContextMenuStrip = $menu
 
 # ---------- 事件 ----------
@@ -340,6 +340,21 @@ $miGame.Add_Click({  try { Set-Mode 'game' } catch { };  Update-Status })
 $miVoice.Add_Click({ try { Set-Mode 'voice' } catch { }; Update-Status })
 $miExit.Add_Click({
     $script:reallyExit = $true
+    # 联动关闭 RVC：写退出标记让它走正常停流退出（最多等 3 秒），卡死就按 pid 强杀兜底。
+    # 用进程判断而非窗口判断——RVC 还在加载（窗口未出现）时退出也要能关掉它
+    try {
+        $rvcPids = @(Get-Process python, pythonw -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+        if ($rvcPids.Count -gt 0) {
+            Set-Content -LiteralPath (Join-Path $RVC_DIR 'panel_quit.flag') -Value 'quit' -Encoding ASCII
+            $deadline = (Get-Date).AddSeconds(3)
+            while ((Get-Date) -lt $deadline -and (Get-Process python, pythonw -ErrorAction SilentlyContinue | Where-Object { $rvcPids -contains $_.Id })) {
+                Start-Sleep -Milliseconds 200
+            }
+            Get-Process python, pythonw -ErrorAction SilentlyContinue |
+                Where-Object { $rvcPids -contains $_.Id } |
+                Stop-Process -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
     try { Set-Mode 'voice' } catch { }
     $form.Close()
 })
